@@ -292,7 +292,7 @@ def start(
         if not candidates:
             rich.print(
                 "[red]No Engine or AsyncEngine found.\n"
-                "Pass one: [bold]consola start --db myapp.database[/bold][/red]"
+                "Pass one: [bold]consola start --db myapp.database:engine[/bold][/red]"
             )
             return
 
