@@ -153,6 +153,12 @@ def pretty_print_error(exc: Exception) -> None:
 
     if isinstance(exc, ConsolaTransactionError):
         lines.append(Text("  ↩ Transaction has been rolled back.", style="dim yellow"))
+        lines.append(
+            Text(
+                "  Hint: run <Model>.columns to see valid column names.",
+                style="dim cyan",
+            )
+        )
 
     cause = exc.__cause__ or exc.__context__
     if cause and not isinstance(cause, ConsolaError):

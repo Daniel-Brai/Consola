@@ -98,11 +98,11 @@ def discover_engines(
     Discover all Engine or AsyncEngine instances in the project codebase
 
     Args:
-        search_paths (Optional[list[str | Path]]): Optional list of directories to scan for .py files to load as modules.
-        extra_modules (Optional[List[ModuleType]]): Optional list of already-loaded modules to include in the search.
+            search_paths (Optional[list[str | Path]]): Optional list of directories to scan for .py files to load as modules.
+            extra_modules (Optional[List[ModuleType]]): Optional list of already-loaded modules to include in the search.
 
     Returns:
-        list[AnyEngine]: List of discovered Engine and AsyncEngine instances.
+            list[AnyEngine]: List of discovered Engine and AsyncEngine instances.
     """
 
     pool: list[ModuleType] = list(extra_modules or [])
@@ -143,13 +143,13 @@ def discover_models(
     Discover all mapped SQLAlchemy or SQLModel classes in the project codebase
 
     Args:
-        search_paths (Optional[list[str] | list[Path]]): Optional list of directories to scan for .py files to load as modules.
-        extra_modules (Optional[List[ModuleType]]): Optional list of already-loaded modules to include in the search.
-        bases (Optional[List[type]]): Optional list of base classes to start the search from (e.g., DeclarativeBase subclasses).
-        registry (Optional[ModelRegistry]): Optional ModelRegistry instance to populate. If not provided, a new one is created.
+            search_paths (Optional[list[str] | list[Path]]): Optional list of directories to scan for .py files to load as modules.
+            extra_modules (Optional[List[ModuleType]]): Optional list of already-loaded modules to include in the search.
+            bases (Optional[List[type]]): Optional list of base classes to start the search from (e.g., DeclarativeBase subclasses).
+            registry (Optional[ModelRegistry]): Optional ModelRegistry instance to populate. If not provided, a new one is created.
 
     Returns:
-        ModelRegistry: A registry containing all discovered model classes.
+            ModelRegistry: A registry containing all discovered model classes.
     """
 
     reg = registry or ModelRegistry()

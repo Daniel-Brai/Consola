@@ -1,32 +1,89 @@
 """
 Consola CLI Audit
 
-    consola audit list
-    consola audit list --pending
-    consola audit review <id>
-    consola audit stats
+    consola audit list --db myapp.database:engine
+    consola audit list --db myapp.database:engine --pending
+    consola audit list --db myapp.database:engine --limit 50
 """
 
 from __future__ import annotations
 
+import importlib
+import sys
 from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 
 rich = Console()
 
 
 audit_app = typer.Typer(
-    help="Inspect and review recorded console sessions.",
+    help="Inspect recorded console sessions.",
     rich_markup_mode="rich",
 )
 
 
+def _load_engine_from_db(db: str):
+    """Resolve an engine from a 'module:variable' string."""
+    if ":" not in db:
+        rich.print(
+            "[red]Invalid [bold]--db[/bold] format. "
+            "Expected [italic]module:variable[/italic], e.g. [bold]myapp.database:engine[/bold][/red]"
+        )
+        raise typer.Exit(1)
+
+    module_path, _, var_name = db.partition(":")
+    if "" not in sys.path:
+        sys.path.insert(0, "")
+    try:
+        mod = importlib.import_module(module_path)
+    except ModuleNotFoundError as exc:
+        rich.print(f"[red]Cannot import [bold]{module_path}[/bold]: {exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    engine = getattr(mod, var_name, None)
+    if engine is None:
+        rich.print(f"[red]Module [bold]{module_path}[/bold] has no attribute [bold]{var_name}[/bold].[/red]")
+        raise typer.Exit(1)
+
+    return engine
+
+
+def _require_audit_tables(engine) -> str:
+    """
+    Verify that audit tables exist in the database and return the sync URL.
+    Aborts with a helpful message if they are missing.
+    """
+    from consola.session import resolve_sync_engine, tables_exist
+
+    existence = tables_exist(engine, ["consola_sessions", "consola_commands"])
+    if not all(existence.values()):
+        rich.print(
+            "[red]Audit tables not found in this database.[/red]\n"
+            "[dim]Start Consola with [bold]--enable-audit[/bold] to create them automatically.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    sync_engine = resolve_sync_engine(engine)
+    return str(sync_engine.url.render_as_string(hide_password=False))
+
+
 @audit_app.command("list")
 def list_audits(
+    db: Annotated[
+        str,
+        typer.Option(
+            "--db",
+            "-d",
+            help=(
+                "Dotted module path with a colon for the variable exposing the db engine. "
+                "Example: [bold]myapp.database:engine[/bold]"
+            ),
+            show_default=False,
+        ),
+    ],
     pending: Annotated[
         bool,
         typer.Option("--pending", help="Only show unreviewed sessions."),
@@ -35,10 +92,6 @@ def list_audits(
         int,
         typer.Option("--limit", help="Maximum number of sessions to show."),
     ] = 20,
-    audit_db: Annotated[
-        str,
-        typer.Option("--audit-db", show_default=True),
-    ] = "sqlite:///consola_audit.db",
 ) -> None:
     """
     List recorded console sessions
@@ -46,7 +99,10 @@ def list_audits(
 
     from consola.audit import AuditReviewer
 
-    sessions = AuditReviewer(audit_db).list_sessions(pending_only=pending, limit=limit)
+    engine = _load_engine_from_db(db)
+    audit_url = _require_audit_tables(engine)
+
+    sessions = AuditReviewer(audit_url).list_sessions(pending_only=pending, limit=limit)
 
     if not sessions:
         rich.print("[dim]No sessions found.[/dim]")
@@ -76,92 +132,5 @@ def list_audits(
             str(len(s.commands)),
             status,
         )
-
-    rich.print(t)
-
-
-@audit_app.command("review")
-def review_audit(
-    session_id: Annotated[int, typer.Argument(help="ID of the session to review.")],
-    audit_db: Annotated[
-        str,
-        typer.Option("--audit-db", show_default=True),
-    ] = "sqlite:///consola_audit.db",
-) -> None:
-    """
-    Interactively review a console session either approve or flag it.
-    """
-
-    from consola.audit import AuditReviewer
-
-    reviewer = AuditReviewer(audit_db)
-    s = reviewer.get_session(session_id)
-
-    if s is None:
-        msg = f"Session [bold]{session_id}[/bold] not found."
-        rich.print(f"[red]{msg}[/red]")
-        raise typer.Exit(1)
-    else:
-        rich.print(
-            Panel(
-                f"[bold]Session #{s.id}[/bold]  "
-                f"user=[cyan]{s.username}[/cyan]  "
-                f"started={s.started_at}  "
-                f"commands={len(s.commands)}",
-                border_style="cyan",
-                expand=False,
-            )
-        )
-        rich.print()
-
-        for i, cmd in enumerate(s.commands, 1):
-            icon = "[red]✗[/red]" if cmd.raised_exception else "[dim]›[/dim]"
-            rich.print(f"  {icon}  [bold]{i:>3}.[/bold]  {cmd.source!r}")
-            if cmd.raised_exception and cmd.exception_message:
-                rich.print(f"             [red dim]{cmd.exception_message}[/red dim]")
-
-        rich.print()
-        choice = typer.prompt(
-            "Decision",
-            type=typer.Option(["approve", "flag", "skip"]),
-            default="skip",
-        )
-
-        if choice == "approve":
-            notes = typer.prompt("Notes (optional)", default="")
-            reviewer.approve(session_id, notes)
-            rich.print("[green]✓ Session approved.[/green]")
-        elif choice == "flag":
-            notes = typer.prompt("Notes", default="")
-            reviewer.flag(session_id, notes)
-            rich.print("[red]⚑ Session flagged.[/red]")
-        else:
-            rich.print("[dim]Skipped.[/dim]")
-
-
-@audit_app.command("stats")
-def audit_stats(
-    audit_db: Annotated[
-        str,
-        typer.Option("--audit-db", show_default=True),
-    ] = "sqlite:///consola_audit.db",
-) -> None:
-    """
-    Show high-level audit statistics
-    """
-
-    from consola.audit import AuditReviewer
-
-    reviewer = AuditReviewer(audit_db)
-    total = len(reviewer.list_sessions(limit=999_999))
-    pending = reviewer.pending_count()
-    reviewed = total - pending
-
-    t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_column("label", style="dim")
-    t.add_column("value", style="bold")
-    t.add_row("Total sessions", str(total))
-    t.add_row("Pending review", f"[yellow]{pending}[/yellow]")
-    t.add_row("Reviewed", f"[green]{reviewed}[/green]")
 
     rich.print(t)

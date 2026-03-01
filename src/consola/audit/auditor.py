@@ -1,7 +1,7 @@
 """
 Audit subsystem records every consola session and command
 
-Inspired by basecamp/audits1984, adapted to Python/SQLAlchemy.
+Inspired by basecamp's audits1984 but without its review capabilities.
 """
 
 from __future__ import annotations

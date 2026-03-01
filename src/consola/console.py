@@ -20,18 +20,18 @@ Auto-rollback on failure for every atomic operation
 
 from __future__ import annotations
 
+import io
 import sys
+from contextlib import redirect_stdout
 from typing import Any
 
 from rich.console import Console as RichConsole
 from rich.panel import Panel
-from rich.table import Table
 
 from consola.audit import Auditor
 from consola.completions import setup_completions
 from consola.discovery import ModelRegistry, discover_engines, discover_models
 from consola.errors import pretty_print_error, translate_error
-from consola.exceptions import ConsolaError
 from consola.logging import attach_logging, detach_logging
 from consola.proxy import ModelProxy
 from consola.session import BridgedSession, SessionBridge, is_async, tables_exist
@@ -39,7 +39,7 @@ from consola.types import AnyEngine
 
 rich = RichConsole()
 
-BANNER = "[bold cyan]Consola[/bold cyan]  [dim]Type :help,  or <Model> --help[/dim]"
+BANNER = "[bold cyan]Consola[/bold cyan]  " "[dim]:help · :models · :exit  or  <Model> --help[/dim]"
 
 _REPL_COMMANDS = {
     ":reload",
@@ -74,11 +74,14 @@ def _print_banner(registry: ModelRegistry, engine: AnyEngine, auto_tx: bool) -> 
     rich.print()
 
 
+_INTERNAL_TABLES: frozenset[str] = frozenset({"consola_sessions", "consola_commands"})
+
+
 def _validate_tables(registry: ModelRegistry, engine: AnyEngine) -> None:
     table_map = {
         getattr(cls, "__tablename__", None): name
         for name, cls in registry.all().items()
-        if getattr(cls, "__tablename__", None)
+        if getattr(cls, "__tablename__", None) and getattr(cls, "__tablename__", None) not in _INTERNAL_TABLES
     }
     if not table_map:
         return
@@ -154,6 +157,8 @@ def _build_namespace(
 
     def __consola_cmd__(cmd: str, arg: str = "") -> None:  # noqa: N802
         nonlocal session
+
+        cmd = cmd.strip().lower()
 
         if cmd == "reload":
             _close_session(state)
@@ -234,25 +239,10 @@ def _build_namespace(
             if proxy is None:
                 rich.print(f"[red]Unknown model: {arg}[/red]")
                 return
-            cls = proxy._model
 
-            from sqlalchemy import inspect as sa_inspect
-
-            insp = sa_inspect(cls)
-            cols = [(c.key, str(c.type), "PK" if c.primary_key else "") for c in insp.mapper.columns]
-
-            t = Table(show_header=True, header_style="bold magenta", box=None, padding=(0, 2))
-            t.add_column("Column", style="cyan")
-            t.add_column("Type", style="dim")
-            t.add_column("")
-            for col_name, col_type, flag in cols:
-                t.add_row(col_name, col_type, flag)
-
-            rich.print(f"\n[bold cyan]{arg}[/bold cyan] [dim]→ {proxy.table_name()}[/dim]\n")
-            rich.print(t)
             rich.print(
                 f"""
-[bold]Methods[/bold]
+[bold]Commands[/bold]
   {arg}.find(pk)
   {arg}.find_or_raise(pk)
   {arg}.find_by(**kwargs)          → single record or None
@@ -276,14 +266,32 @@ def _build_namespace(
     return ns
 
 
+class _NoOpAuditor:
+    """
+    Audit stub used when audit logging is disabled
+    """
+
+    def __enter__(self) -> _NoOpAuditor:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        pass
+
+    def record(self, source: str, exception: Any | None = None) -> None:
+        pass
+
+    @property
+    def session_id(self) -> None:
+        return None
+
+
 def start(
     engine: AnyEngine | None = None,
     bases: list[type] | None = None,
     search_paths: list[str] | None = None,
-    audit_db_url: str = "sqlite:///consola_audit.db",
     sql_logging: bool = True,
-    use_ipython: bool = True,
     auto_transaction: bool = True,
+    enable_audit: bool = False,
 ) -> None:
     if engine is None:
         cwd = search_paths or ["."]
@@ -319,18 +327,23 @@ def start(
     _print_banner(registry, engine, auto_transaction)
     _validate_tables(registry, engine)
 
-    with Auditor(audit_db_url) as auditor:
+    if enable_audit:
+        from consola.audit.models import AuditBase
+        from consola.session import resolve_sync_engine
+
+        audit_sync_engine = resolve_sync_engine(engine)
+        AuditBase.metadata.create_all(audit_sync_engine)
+        audit_db_url = str(audit_sync_engine.url.render_as_string(hide_password=False))
+        auditor_cm: Any = Auditor(audit_db_url)
+    else:
+        auditor_cm = _NoOpAuditor()
+
+    with auditor_cm as auditor:
         ns = _build_namespace(registry, bridge, engine, state, auto_transaction)
         setup_completions(ns, registry.names())
 
         try:
-            if use_ipython:
-                try:
-                    _start_ipython(ns, auditor, auto_transaction, state)
-                except ImportError:
-                    _start_stdlib(ns, auditor, auto_transaction, state)
-            else:
-                _start_stdlib(ns, auditor, auto_transaction, state)
+            _start_stdlib(ns, auditor)
         finally:
             _close_session(state)
 
@@ -338,51 +351,54 @@ def start(
         detach_logging(engine)
 
 
-def _start_ipython(ns: dict[str, Any], auditor: Auditor, auto_tx: bool, state: dict[str, Any]) -> None:
-    from IPython import start_ipython
-    from IPython.core.interactiveshell import InteractiveShell
-
-    class _Shell(InteractiveShell):
-        def run_cell(self, raw_cell, *args, **kwargs):  # type: ignore[override]
-            transformed = _preprocess(raw_cell or "")
-            cell = transformed if transformed is not None else raw_cell
-            exc = None
-            try:
-                result = super().run_cell(cell, *args, **kwargs)
-                if result.error_in_exec:
-                    exc = result.error_in_exec
-                    if not isinstance(exc, ConsolaError):
-                        consola_exc = translate_error(exc)
-                        pretty_print_error(consola_exc)
-                        result.error_in_exec = consola_exc
-                return result
-            except Exception as e:
-                exc = e
-                raise
-            finally:
-                if raw_cell and raw_cell.strip():
-                    auditor.record(raw_cell, exception=exc)
-
-    start_ipython(argv=[], user_ns=ns, interactive_shell_class=_Shell)
-
-
-def _start_stdlib(ns: dict[str, Any], auditor: Auditor, auto_tx: bool, state: dict[str, Any]) -> None:
+def _start_stdlib(ns: dict[str, Any], auditor: Any) -> None:
     import code
 
+    _exc_holder: list[Any | None] = [None]
+
     class _Console(code.InteractiveConsole):
-        def runsource(self, source, filename="<input>", symbol="single"):  # type: ignore[override]
+        def showtraceback(self) -> None:  # type: ignore[override]
+            import sys
+
+            _, exc_value, _ = sys.exc_info()
+            if exc_value is not None:
+                _exc_holder[0] = exc_value
+                consola_exc = translate_error(exc_value)
+                pretty_print_error(consola_exc)
+
+        def showsyntaxerror(self, filename: str | None = None, **kwargs: Any) -> None:  # type: ignore[override]
+            import sys
+
+            _, exc_value, _ = sys.exc_info()
+            if exc_value is not None:
+                _exc_holder[0] = exc_value
+                consola_exc = translate_error(exc_value)
+                pretty_print_error(consola_exc)
+
+        def runsource(self, source: str, filename: str = "<input>", symbol: str = "single") -> bool:  # type: ignore[override]
+            _exc_holder[0] = None
             transformed = _preprocess(source)
             actual = transformed if transformed is not None else source
-            exc: Exception | None = None
             try:
-                return super().runsource(actual, filename, symbol)
-            except Exception as e:
-                exc = e
-                consola_exc = translate_error(e)
-                pretty_print_error(consola_exc)
-                raise
+                # Only capture stdout for plain user code so we can colorize
+                # print() output in green. REPL commands (transformed is not
+                # None) already write via Rich directly — capturing them would
+                # collect rendered ANSI bytes and then double-render them.
+                if transformed is not None:
+                    result = super().runsource(actual, filename, symbol)
+                else:
+                    output_buffer = io.StringIO()
+                    with redirect_stdout(output_buffer):
+                        result = super().runsource(actual, filename, symbol)
+
+                    captured_output = output_buffer.getvalue()
+                    if captured_output:
+                        for line in captured_output.rstrip("\n").split("\n"):
+                            rich.print(f"[green]{line}[/green]")
+
+                return result
             finally:
                 if source and source.strip():
-                    auditor.record(source, exception=exc)
+                    auditor.record(source, exception=_exc_holder[0])
 
     _Console(locals=ns).interact(banner="", exitmsg="")

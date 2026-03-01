@@ -39,7 +39,7 @@ class ConsolaSession(AuditBase):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(256), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.now)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
     approved: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -84,7 +84,7 @@ class ConsolaCommand(AuditBase):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(ForeignKey("consola_sessions.id"), nullable=False)
     source: Mapped[str] = mapped_column(Text, nullable=False)
-    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.now)
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.now)
     raised_exception: Mapped[bool] = mapped_column(Boolean, default=False)
     exception_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 

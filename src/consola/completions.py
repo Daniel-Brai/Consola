@@ -35,8 +35,8 @@ _HELPER_METHODS = [
     "destroy(",
     "destroy_by(",
     "destroy_all(",
-    "columns()",
-    "table_name()",
+    "columns",
+    "table_name",
 ]
 
 

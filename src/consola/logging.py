@@ -39,7 +39,7 @@ def _after(
     _console.print(Syntax(statement.strip(), "sql", theme="monokai", word_wrap=True, padding=(0, 2)))
 
     if parameters:
-        p = Text("  Params  ", style="bold magenta")
+        p = Text("Params  ", style="bold magenta")
         p.append(repr(parameters), style="dim")
         _console.print(p)
 

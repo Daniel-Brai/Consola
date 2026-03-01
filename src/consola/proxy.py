@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from sqlalchemy import Select, func, select
 
-from consola.errors import pretty_print_error, translate_error
+from consola.errors import translate_error
 from consola.exceptions import ConsolaLookupError
 from consola.repr import patch_instance, patch_list
 from consola.session import BridgedSession
@@ -41,7 +42,6 @@ class ModelProxy:
         except Exception as exc:
             self._session.rollback()
             consola_exc = translate_error(exc, params=params or {})
-            pretty_print_error(consola_exc)
             raise consola_exc from exc
 
     def find(self, pk: Any) -> Any:
@@ -74,9 +74,7 @@ class ModelProxy:
 
         obj = self._session.get(self._model, pk)
         if obj is None:
-            exc = ConsolaLookupError(f"{self._model.__name__} pk={pk!r} not found")
-            pretty_print_error(exc)
-            raise exc
+            raise ConsolaLookupError(f"{self._model.__name__} pk={pk!r} not found")
 
         return patch_instance(obj)
 
@@ -431,15 +429,47 @@ class ModelProxy:
         return self._run_write(_do, params=kwargs)
 
     @property
-    def columns(self) -> list[str]:
+    def columns(self) -> None:
         """
-        Retrieve a list of column names for this model
+        Print a rich table of column metadata: name, type, PK, FK, nullable, unique, default
         """
+        from rich.console import Console as RichConsole
+        from rich.table import Table
         from sqlalchemy import inspect as sa_inspect
 
+        _c = RichConsole()
         sa_mapper: Any = sa_inspect(self._model)
 
-        return [c.key for c in sa_mapper.mapper.columns]
+        t = Table(
+            show_header=True,
+            header_style="bold magenta",
+            box=None,
+            padding=(0, 2),
+        )
+        t.add_column("Column", style="cyan")
+        t.add_column("Type", style="dim")
+        t.add_column("PK", justify="center")
+        t.add_column("FK", justify="center", style="dim cyan")
+        t.add_column("Nullable", justify="center")
+        t.add_column("Unique", justify="center")
+        t.add_column("Default", style="dim")
+
+        for col in sa_mapper.mapper.columns:
+            pk = "[bold green]✓[/bold green]" if col.primary_key else ""
+            fk_targets = ", ".join(str(f.target_fullname) for f in col.foreign_keys)
+            fk = fk_targets if fk_targets else ""
+            nullable = "" if col.nullable else "[dim]✗[/dim]"
+            unique = "[bold]✓[/bold]" if col.unique else ""
+            default = ""
+            if col.default is not None and hasattr(col.default, "arg"):
+                default = str(col.default.arg)
+            elif col.server_default is not None and hasattr(col.server_default, "arg"):
+                default = f"server:{str(col.server_default.arg)[:20]}"
+            t.add_row(col.key, str(col.type), pk, fk, nullable, unique, default)
+
+        _c.print(f"\n[bold cyan]{self._model.__name__}[/bold cyan] [dim]→ {self.table_name}[/dim]")
+        _c.print(t)
+        _c.print()
 
     @property
     def table_name(self) -> str:
@@ -469,4 +499,23 @@ class ModelProxy:
         return self._model(*args, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._model, name)
+        attr = getattr(self._model, name, None)
+
+        if attr is None:
+            raise ConsolaLookupError(f"{self._model.__name__} has no attribute {name!r}")
+
+        if callable(attr):
+            if inspect.iscoroutinefunction(attr):
+
+                async def async_method(*args: Any, **kwargs: Any) -> Any:
+                    return await attr(*args, **kwargs)
+
+                return async_method
+            else:
+
+                def method(*args: Any, **kwargs: Any) -> Any:
+                    return attr(*args, **kwargs)
+
+            return method
+        else:
+            return attr

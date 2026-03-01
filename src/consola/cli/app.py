@@ -5,9 +5,8 @@ Consola CLI App
     consola start --db myapp.database:engine    explicit module and variable name
     consola start --no-transaction
     consola start --no-sql-log
-    consola start --no-ipython
-    consola start --audit-db <url>
     consola start --scan <dir>
+    consola start --enable-audit
 """
 
 from __future__ import annotations
@@ -115,21 +114,17 @@ def start(
             help="Disable pretty SQL logging.",
         ),
     ] = False,
-    no_ipython: Annotated[
+    enable_audit: Annotated[
         bool,
         typer.Option(
-            "--no-ipython",
-            help="Use the stdlib REPL instead of IPython.",
+            "--enable-audit",
+            help=(
+                "Enable audit logging. Creates [cyan]consola_sessions[/cyan] and "
+                "[cyan]consola_commands[/cyan] tables in the main database if they "
+                "don't exist and records every session and command."
+            ),
         ),
     ] = False,
-    audit_db: Annotated[
-        str,
-        typer.Option(
-            "--audit-db",
-            help="SQLAlchemy URL for the audit database.",
-            show_default=True,
-        ),
-    ] = "sqlite:///consola_audit.db",
 ) -> None:
     """
     Boot the [bold cyan]Consola[/bold cyan] interactive console
@@ -155,7 +150,7 @@ def start(
         if engine is None:
             _abort(
                 f"Module [bold]{db}[/bold] has no [bold]{var_name}[/bold] attribute.\n"
-                f"Ensure it exposes a SQLAlchemy Engine or AsyncEngine as `{var_name}`."
+                f"Ensure it exposes a SQLAlchemy Engine or AsyncEngine as the variable `{var_name}`."
             )
         bases = _collect_bases(mod)
 
@@ -165,8 +160,7 @@ def start(
         engine=engine,
         bases=bases or None,
         search_paths=[str(p) for p in scan] if scan else None,
-        audit_db_url=audit_db,
         sql_logging=not no_sql_log,
-        use_ipython=not no_ipython,
         auto_transaction=not no_transaction,
+        enable_audit=enable_audit,
     )
