@@ -1,7 +1,7 @@
 """
 Pretty error rendering for the Consola REPL.
 
-Intercepts both Consola-specific exceptions and raw SQLAlchemy errors,
+IT catches both Consola specific exceptions and raw SQLAlchemy errors,
 formats them with Rich so the REPL output stays readable.
 
 Usage:

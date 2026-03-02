@@ -11,7 +11,9 @@ AnyEngine: TypeAlias = Engine | AsyncEngine
 
 class ConsolaList(list):
     """
-    A list subclass whose repr prints one item per line, like Rails:
+    A list subclass whose repr prints one item per line somewhat like Rails
+
+    Example:
 
         [
             #<User id=1 name="Daniel">,
