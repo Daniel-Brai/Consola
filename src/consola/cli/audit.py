@@ -2,7 +2,6 @@
 Consola CLI Audit
 
     consola audit list --db myapp.database:engine
-    consola audit list --db myapp.database:engine --pending
     consola audit list --db myapp.database:engine --limit 50
 """
 
@@ -26,7 +25,6 @@ audit_app = typer.Typer(
 
 
 def _load_engine_from_db(db: str):
-    """Resolve an engine from a 'module:variable' string."""
     if ":" not in db:
         rich.print(
             "[red]Invalid [bold]--db[/bold] format. "
@@ -35,8 +33,10 @@ def _load_engine_from_db(db: str):
         raise typer.Exit(1)
 
     module_path, _, var_name = db.partition(":")
+
     if "" not in sys.path:
         sys.path.insert(0, "")
+
     try:
         mod = importlib.import_module(module_path)
     except ModuleNotFoundError as exc:
@@ -51,12 +51,8 @@ def _load_engine_from_db(db: str):
     return engine
 
 
-def _require_audit_tables(engine) -> str:
-    """
-    Verify that audit tables exist in the database and return the sync URL.
-    Aborts with a helpful message if they are missing.
-    """
-    from consola.session import resolve_sync_engine, tables_exist
+def _require_audit_tables(engine) -> None:
+    from consola.session import tables_exist
 
     existence = tables_exist(engine, ["consola_sessions", "consola_commands"])
     if not all(existence.values()):
@@ -65,9 +61,6 @@ def _require_audit_tables(engine) -> str:
             "[dim]Start Consola with [bold]--enable-audit[/bold] to create them automatically.[/dim]"
         )
         raise typer.Exit(1)
-
-    sync_engine = resolve_sync_engine(engine)
-    return str(sync_engine.url.render_as_string(hide_password=False))
 
 
 @audit_app.command("list")
@@ -84,10 +77,6 @@ def list_audits(
             show_default=False,
         ),
     ],
-    pending: Annotated[
-        bool,
-        typer.Option("--pending", help="Only show unreviewed sessions."),
-    ] = False,
     limit: Annotated[
         int,
         typer.Option("--limit", help="Maximum number of sessions to show."),
@@ -97,14 +86,14 @@ def list_audits(
     List recorded console sessions
     """
 
-    from consola.audit import AuditReviewer
+    from consola.audit import AuditReader
 
     engine = _load_engine_from_db(db)
-    audit_url = _require_audit_tables(engine)
+    _require_audit_tables(engine)
 
-    sessions = AuditReviewer(audit_url).list_sessions(pending_only=pending, limit=limit)
+    rows = AuditReader(engine).list_sessions(limit=limit)
 
-    if not sessions:
+    if not rows:
         rich.print("[dim]No sessions found.[/dim]")
         return
 
@@ -114,23 +103,15 @@ def list_audits(
     t.add_column("Started", style="white")
     t.add_column("Duration", justify="right")
     t.add_column("Cmds", justify="right")
-    t.add_column("Status")
 
-    for s in sessions:
+    for s, cmd_count in rows:
         dur = f"{s.duration_seconds():.0f}s" if s.duration_seconds() else "—"
-        if not s.reviewed:
-            status = "[yellow]pending[/yellow]"
-        elif s.approved:
-            status = "[green]✓ approved[/green]"
-        else:
-            status = "[red]⚑ flagged[/red]"
         t.add_row(
             str(s.id),
             s.username,
             s.started_at.strftime("%Y-%m-%d %H:%M") if s.started_at else "?",
             dur,
-            str(len(s.commands)),
-            status,
+            str(cmd_count),
         )
 
     rich.print(t)

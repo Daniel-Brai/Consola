@@ -11,10 +11,11 @@ import os
 from contextlib import AbstractContextManager
 from typing import Any
 
-from consola.audit.models import ConsolaCommand, ConsolaSession, get_audit_engine
+from consola.audit.models import AuditBase, ConsolaCommand, ConsolaSession
 from consola.session import BridgedSession, SessionBridge
+from consola.types import AnyEngine
 
-__all__ = ["Auditor", "AuditReviewer"]
+__all__ = ["Auditor", "AuditReader"]
 
 
 def _current_user() -> str:
@@ -31,9 +32,14 @@ class Auditor:
             auditor.record("User.all()")
     """
 
-    def __init__(self, audit_db_url: str = "sqlite:///consola_audit.db") -> None:
-        self._engine = get_audit_engine(audit_db_url)
-        self._bridge = SessionBridge(self._engine)
+    def __init__(self, engine: AnyEngine) -> None:
+        from consola.session import resolve_sync_engine
+
+        engine = resolve_sync_engine(engine)
+        AuditBase.metadata.create_all(engine)
+
+        self._engine = engine
+        self._bridge = SessionBridge(engine)
         self._db_cm: AbstractContextManager[BridgedSession] | None = None
         self._db: BridgedSession | None = None
         self._console_session: ConsolaSession | None = None
@@ -76,55 +82,38 @@ class Auditor:
         return self._console_session.id if self._console_session else None
 
 
-class AuditReviewer:
+class AuditReader:
     """
-    CLI-level audit review interface
+    CLI level audit read interface
     """
 
-    def __init__(self, audit_db_url: str = "sqlite:///consola_audit.db") -> None:
-        self._engine = get_audit_engine(audit_db_url)
-        self._bridge = SessionBridge(self._engine)
+    def __init__(self, engine: AnyEngine) -> None:
+        from consola.session import resolve_sync_engine
+
+        sync_engine = resolve_sync_engine(engine)
+        self._engine = sync_engine
+        self._bridge = SessionBridge(sync_engine)
 
     def _db(self):
         return self._bridge()
 
-    def list_sessions(self, pending_only: bool = False, limit: int = 50) -> list[ConsolaSession]:
+    def list_sessions(self, limit: int = 50) -> list[tuple[ConsolaSession, int]]:
         with self._db() as db:
-            from sqlalchemy import select
+            from sqlalchemy import func, select
 
-            stmt = select(ConsolaSession).order_by(ConsolaSession.started_at.desc()).limit(limit)
-            if pending_only:
-                stmt = stmt.where(ConsolaSession.reviewed.is_(False))
-
-            return list(db.scalars(stmt).all())
+            count_sub = (
+                select(ConsolaCommand.session_id, func.count().label("cmd_count"))
+                .group_by(ConsolaCommand.session_id)
+                .subquery()
+            )
+            stmt = (
+                select(ConsolaSession, func.coalesce(count_sub.c.cmd_count, 0))
+                .outerjoin(count_sub, ConsolaSession.id == count_sub.c.session_id)
+                .order_by(ConsolaSession.started_at.desc())
+                .limit(limit)
+            )
+            return list(db.execute(stmt).all())
 
     def get_session(self, session_id: int) -> ConsolaSession | None:
         with self._db() as db:
             return db.get(ConsolaSession, session_id)
-
-    def approve(self, session_id: int, notes: str = "") -> bool:
-        with self._db() as db:
-            s = db.get(ConsolaSession, session_id)
-            if s is None:
-                return False
-            s.approve(notes)
-            db.commit()
-            return True
-
-    def flag(self, session_id: int, notes: str = "") -> bool:
-        with self._db() as db:
-            s = db.get(ConsolaSession, session_id)
-            if s is None:
-                return False
-            s.flag(notes)
-            db.commit()
-            return True
-
-    def pending_count(self) -> int:
-        with self._db() as db:
-            from sqlalchemy import func, select
-
-            return (
-                db.scalar(select(func.count()).select_from(ConsolaSession).where(ConsolaSession.reviewed.is_(False)))
-                or 0
-            )

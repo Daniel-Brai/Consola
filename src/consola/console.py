@@ -92,7 +92,7 @@ def _validate_tables(registry: ModelRegistry, engine: AnyEngine) -> None:
     missing = [tbl for tbl, ok in existence.items() if not ok]
     if not missing:
         return
-    rich.print("[bold yellow]⚠  Missing tables (run migrations then :reload):[/bold yellow]")
+    rich.print("[bold yellow]⚠  Missing tables (run your migrations or create your models then :reload):[/bold yellow]")
     for tbl in missing:
         rich.print(f"   [red]✗[/red]  {table_map[tbl]} → [dim]{tbl}[/dim]")
     rich.print()
@@ -101,6 +101,9 @@ def _validate_tables(registry: ModelRegistry, engine: AnyEngine) -> None:
 def _preprocess(source: str) -> str | None:
     """
     Transform bare REPL commands and `Model --help` into real Python calls.
+
+    Args:
+        source (str): The raw source code entered by the user.
 
     Returns:
       str | None: Transformed source to execute, or None to run as-is.
@@ -328,13 +331,7 @@ def start(
     _validate_tables(registry, engine)
 
     if enable_audit:
-        from consola.audit.models import AuditBase
-        from consola.session import resolve_sync_engine
-
-        audit_sync_engine = resolve_sync_engine(engine)
-        AuditBase.metadata.create_all(audit_sync_engine)
-        audit_db_url = str(audit_sync_engine.url.render_as_string(hide_password=False))
-        auditor_cm: Any = Auditor(audit_db_url)
+        auditor_cm: Any = Auditor(engine)
     else:
         auditor_cm = _NoOpAuditor()
 
@@ -343,7 +340,7 @@ def start(
         setup_completions(ns, registry.names())
 
         try:
-            _start_stdlib(ns, auditor)
+            _start_stdlib(ns, auditor, registry.names())
         finally:
             _close_session(state)
 
@@ -351,7 +348,14 @@ def start(
         detach_logging(engine)
 
 
-def _start_stdlib(ns: dict[str, Any], auditor: Any) -> None:
+def _touches_model(source: str, model_names: list[str]) -> bool:
+    import re
+
+    tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", source))
+    return bool(tokens.intersection(model_names))
+
+
+def _start_stdlib(ns: dict[str, Any], auditor: Any, model_names: list[str]) -> None:
     import code
 
     _exc_holder: list[Any | None] = [None]
@@ -379,11 +383,8 @@ def _start_stdlib(ns: dict[str, Any], auditor: Any) -> None:
             _exc_holder[0] = None
             transformed = _preprocess(source)
             actual = transformed if transformed is not None else source
+
             try:
-                # Only capture stdout for plain user code so we can colorize
-                # print() output in green. REPL commands (transformed is not
-                # None) already write via Rich directly — capturing them would
-                # collect rendered ANSI bytes and then double-render them.
                 if transformed is not None:
                     result = super().runsource(actual, filename, symbol)
                 else:
@@ -398,7 +399,7 @@ def _start_stdlib(ns: dict[str, Any], auditor: Any) -> None:
 
                 return result
             finally:
-                if source and source.strip():
+                if source and source.strip() and transformed is None and _touches_model(source, model_names):
                     auditor.record(source, exception=_exc_holder[0])
 
     _Console(locals=ns).interact(banner="", exitmsg="")

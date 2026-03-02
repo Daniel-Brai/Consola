@@ -1,6 +1,6 @@
-from .auditor import Auditor, AuditReviewer
+from .auditor import Auditor, AuditReader
 
 __all__ = [
     "Auditor",
-    "AuditReviewer",
+    "AuditReader",
 ]

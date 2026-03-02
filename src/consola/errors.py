@@ -61,8 +61,10 @@ def translate_error(
     params: dict[str, Any] | None = None,
 ) -> ConsolaError:
     """
-    Convert a raw SQLAlchemy (or DBAPI) exception or any exception into the appropriate ConsolaError subclass, preserving the original as __cause__.
+    Convert a raw SQLAlchemy (or DBAPI) exception or any exception into the appropriate ConsolaError subclass,
+    preserving the original as __cause__.
     """
+
     sa = _sa_exceptions()
     msg = _extract_message(exc)
 

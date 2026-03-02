@@ -24,7 +24,7 @@ __all__ = ["discover_models", "discover_engines", "ModelRegistry"]
 
 class ModelRegistry:
     """
-    A registry for discovered model classes
+    Registry for discovered model classes
     """
 
     def __init__(self) -> None:
@@ -61,8 +61,13 @@ def _is_mapped(cls: type) -> bool:
 
 def _walk_subclasses(base: type, registry: ModelRegistry) -> None:
     for cls in base.__subclasses__():
+        mod = getattr(cls, "__module__", "")
+        if isinstance(mod, str) and mod.startswith("consola."):
+            continue
+
         if _is_mapped(cls):
             registry.register(cls)
+
         _walk_subclasses(cls, registry)
 
 
@@ -98,11 +103,11 @@ def discover_engines(
     Discover all Engine or AsyncEngine instances in the project codebase
 
     Args:
-            search_paths (Optional[list[str | Path]]): Optional list of directories to scan for .py files to load as modules.
-            extra_modules (Optional[List[ModuleType]]): Optional list of already-loaded modules to include in the search.
+        search_paths (Optional[list[str | Path]]): Optional list of directories to scan for .py files to load as modules.
+        extra_modules (Optional[List[ModuleType]]): Optional list of already-loaded modules to include in the search.
 
     Returns:
-            list[AnyEngine]: List of discovered Engine and AsyncEngine instances.
+        list[AnyEngine]: List of discovered Engine and AsyncEngine instances.
     """
 
     pool: list[ModuleType] = list(extra_modules or [])
@@ -178,6 +183,10 @@ def discover_models(
                 continue
 
             seen.add(id(cls))
+
+            consola_mod: Any = getattr(cls, "__module__", "")
+            if isinstance(consola_mod, str) and consola_mod.startswith("consola."):
+                continue
 
             if isinstance(type(cls), DeclarativeMeta) and _is_mapped(cls):
                 reg.register(cls)
