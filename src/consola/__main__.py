@@ -4,7 +4,7 @@ Allows Consola to be run as a module
     python -m consola
     uv run python -m consola
     uv run python -m consola start --db myapp.database:engine
-    uv run python -m consola audit list
+    uv run python -m consola audit list --db myapp.database:engine
 """
 
 from consola.cli import app
