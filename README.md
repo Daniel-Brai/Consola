@@ -8,6 +8,40 @@ A tiny interactive SQL console for exploring SQLAlchemy/SQLModel models and exec
 - **Quick start**: Install consola and run the CLI to open an interactive REPL for your project with `consola start`.
 - **Async and Sync Engines**: It supports both sync and async SQLAlchemy engines and bridges async sessions with a sync-style API.
 
+## Installation
+
+Consola is not published on PyPI. Install it directly from GitHub.
+
+### Using uv (recommended)
+
+```bash
+uv tool install "consola @ git+https://github.com/Daniel-Brai/Consola.git"
+```
+
+To install a specific version, append the tag:
+
+```bash
+uv tool install "consola @ git+https://github.com/Daniel-Brai/Consola.git@v0.1.0"
+```
+
+### Using pip
+
+```bash
+pip install "consola @ git+https://github.com/Daniel-Brai/Consola.git"
+```
+
+To install a specific version:
+
+```bash
+pip install "consola @ git+https://github.com/Daniel-Brai/Consola.git@v0.1.0"
+```
+
+### Verify the installation
+
+```bash
+consola --help
+```
+
 ## Motivation for Consola
 
 I was inspired by the Rails Console in [Ruby on Rails](https://rubyonrails.org/), a powerful interactive REPL that makes exploring models and querying the database effortless during development. I wanted the same convenience when
